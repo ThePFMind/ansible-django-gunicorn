@@ -1,0 +1,76 @@
+---
+
+# init, setup deploy user, secure server
+- hosts: lb
+  become: true
+  become_method: sudo
+  remote_user: vagrant
+  vars:
+    UBUNTU_ADMIN_USERNAME: hero
+    # echo 'import crypt,getpass; print crypt.crypt(getpass.getpass(), "$6$YOURSALT")' | python -
+    # password: I-@m-hero#2016
+    UBUNTU_ADMIN_PASSWORD: $6$YOURSALT$Btra3q4BGVRr2nlqNsqgEGZBnp3JJVyxTUWppdtbszjUvhFhKio/0BCB2oxpzgICtRam9q0Y75O5AM7CagQBH/
+
+  tasks:
+
+  - name: Set up password-less sudo for user
+    copy: content="%admin ALL=(ALL) NOPASSWD:ALL"
+          dest="/etc/sudoers.d/hero"
+          owner=root
+          group=root
+          mode=0440
+
+  - name: add admin user
+    user: name={{ UBUNTU_ADMIN_USERNAME }}
+          comment="hero user"
+          password="{{ UBUNTU_ADMIN_PASSWORD }}"
+          shell=/bin/bash
+          group=admin
+
+  - name: install ssh key
+    authorized_key: user={{ UBUNTU_ADMIN_USERNAME }}
+                    key="{{ lookup('file', '~/.ssh/authorized_keys.server_rsa.pub') }}"
+                    state=present
+
+  - name: disallow password authentication
+    lineinfile: dest=/etc/ssh/sshd_config
+                regexp="^PasswordAuthentication"
+                line="PasswordAuthentication no"
+                state=present
+    notify: restart ssh
+
+  - name: disallow root SSH access
+    lineinfile: dest=/etc/ssh/sshd_config
+                regexp="^PermitRootLogin"
+                line="PermitRootLogin no"
+                state=present
+    notify: restart ssh
+
+
+# lb
+- hosts: lb
+  become: yes
+  become_method: sudo
+  remote_user: vagrant
+  gather_facts: true
+
+  tasks:
+
+  - name: install haproxy and socat
+    apt: pkg={{ item }} state=latest
+    with_items:
+    - haproxy
+    - socat
+
+  - name: enable haproxy
+    lineinfile: dest=/etc/default/haproxy regexp="^ENABLED" line="ENABLED=1"
+    notify: restart haproxy
+
+  - name: deploy haproxy config
+    template: src=templates/haproxy.cfg.j2 dest=/etc/haproxy/haproxy.cfg
+    notify: restart haproxy
+
+  handlers:
+
+  - name: restart haproxy
+    service: name=haproxy state=restarted

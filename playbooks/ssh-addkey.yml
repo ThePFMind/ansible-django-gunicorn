@@ -1,0 +1,14 @@
+---
+
+- hosts: all
+  become: true
+  become_method: sudo
+  remote_user: vagrant
+  gather_facts: no
+  
+  tasks:
+
+  - name: install ssh key
+    authorized_key: user=vagrant
+                    key="{{ lookup('file', '/Users/ThePFMind/.ssh/authorized_keys.server_rsa.pub') }}"
+                    state=present

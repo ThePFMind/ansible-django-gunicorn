@@ -1,0 +1,41 @@
+---
+
+# site
+- hosts: web
+  become: true
+  become_method: sudo
+  remote_user: deploy
+  serial: 1
+
+  vars:
+    # https://github.com/jweissig/episode-47/releases
+    website: example.com
+    project_name: findpack
+    project_git_repo: git@bitbucket.org:pitchaya/findpack.space-django.git
+    project_git_key_file: /home/deploy/.ssh/deploy_rsa
+
+  tasks:
+
+  - name: clean existing website content
+    #shell: rm -f /var/www/{{ website }}*
+    file: path=/var/www/{{ website }} state=absent
+
+  - name: deploy website content
+    git: repo={{ project_git_repo }} key_file={{ project_git_key_file }} accept_hostkey=yes dest=/var/www/{{ website }}
+         # version={{ app_version }}
+
+  - name: install PIP packages
+    pip: requirements=/var/www/{{ website }}/requirements.txt virtualenv=/home/deploy/.virtualenv
+    become_user: deploy
+
+  - name: write our upstart.conf
+    template: src=templates/upstart.conf.j2 dest=/etc/init/gunicorn_upstart.conf
+    notify: restart gunicorn_upstart
+
+  - name: Creates directory
+    file: path=/var/www/{{ website }} recurse=yes state=directory owner=www-data group=www-data mode=0775
+
+  handlers:
+
+  - name: restart gunicorn_upstart
+    service: name=gunicorn_upstart state=restarted

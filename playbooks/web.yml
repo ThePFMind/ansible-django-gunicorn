@@ -1,0 +1,119 @@
+---
+
+# init, setup deploy user, secure server
+- hosts: web
+  become: true
+  become_method: sudo
+  remote_user: vagrant
+  vars:
+    UBUNTU_DEPLOY_USERNAME: deploy
+    # echo 'import crypt,getpass; print crypt.crypt(getpass.getpass(), "$6$YOURSALT")' | python -
+    # password: I-@m-hero#2016
+    UBUNTU_DEPLOY_PASSWORD: $6$YOURSALT$Btra3q4BGVRr2nlqNsqgEGZBnp3JJVyxTUWppdtbszjUvhFhKio/0BCB2oxpzgICtRam9q0Y75O5AM7CagQBH/
+
+  tasks:
+
+  - name: create deploy group
+    group: name=deploy state=present
+
+  - name: Set up password-less sudo for user
+    copy: content="%deploy ALL=(ALL) NOPASSWD:ALL"
+          dest="/etc/sudoers.d/deploy"
+          owner=root
+          group=root
+          mode=0440
+
+  - name: add admin user
+    user: name={{ UBUNTU_DEPLOY_USERNAME }}
+          comment="Admin user"
+          password="{{ UBUNTU_DEPLOY_PASSWORD }}"
+          shell=/bin/bash
+          group=deploy
+
+  - name: install ssh key
+    authorized_key: user={{ UBUNTU_DEPLOY_USERNAME }}
+                    key="{{ lookup('file', '~/.ssh/authorized_keys.server_rsa.pub') }}"
+                    state=present
+
+  - name: disallow password authentication
+    lineinfile: dest=/etc/ssh/sshd_config
+                regexp="^PasswordAuthentication"
+                line="PasswordAuthentication no"
+                state=present
+    notify: restart ssh
+
+  - name: disallow root SSH access
+    lineinfile: dest=/etc/ssh/sshd_config
+                regexp="^PermitRootLogin"
+                line="PermitRootLogin no"
+                state=present
+    notify: restart ssh
+
+# common
+- hosts: all
+  become: yes
+  become_method: sudo
+  remote_user: deploy
+
+  tasks:
+
+  - name: install git
+    apt: name=git state=installed update_cache=yes
+
+# git ssh
+- hosts: web
+  remote_user: deploy
+
+  tasks:
+
+  - name: copy ssh private key
+    copy: src=~/.ssh/deploy_rsa dest=/home/deploy/.ssh/deploy_rsa mode=0600
+
+# web
+- hosts: web
+  become: true
+  become_method: sudo
+  remote_user: deploy
+
+  tasks:
+
+  - name: install nginx
+    apt: name=nginx state=installed
+
+  - name: write our nginx.conf
+    template: src=templates/nginx.conf.j2 dest=/etc/nginx/nginx.conf
+    notify: restart nginx
+
+  - name: write our /etc/nginx/sites-available/default
+    template: src=templates/default-site.j2 dest=/etc/nginx/sites-available/default
+    notify: restart nginx
+
+  - name: deploy website content
+    template: src=templates/index.html.j2 dest=/usr/share/nginx/html/index.html
+
+  handlers:
+
+  - name: restart nginx
+    service: name=nginx state=restarted
+
+# virtualenv
+- hosts: web
+  remote_user: deploy
+
+  tasks:
+
+  - name: install virtualenv
+    apt: pkg={{ item }} state=installed update-cache=yes
+    with_items:
+      - python-virtualenv
+    become: true
+    become_method: sudo
+
+  - name: create new virtualenv
+    command: creates=/home/deploy/.virtualenv virtualenv -p python3 /home/deploy/.virtualenv/
+
+  - name: install gunicorn on virtualenv
+    pip: name={{ item }} virtualenv=/home/deploy/.virtualenv
+    with_items:
+      - gunicorn
+      - django
